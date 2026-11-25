@@ -72,15 +72,14 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "https://proofly-page.vercel.app",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
-        "https://proofly-page.vercel.app/"
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 # Create database tables when models are added
 Base.metadata.create_all(bind=engine)
 password_hash = PasswordHash.recommended()
