@@ -9,6 +9,7 @@ from models import Product
 from schemas import ProductCreate, ProductUpdate, ProductResponse
 from models import Testimonial
 from models import PageView
+from models import RevokedToken
 from schemas import (
     TestimonialCreate,
     TestimonialUpdate,
@@ -60,7 +61,9 @@ from schemas import (
 from fastapi import UploadFile, File
 from cloudinary_service import upload_image
 from security import get_current_user
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
+security = HTTPBearer()
 app = FastAPI(
     title="Proofly API",
     description="Backend API for the Proofly platform",
@@ -681,6 +684,22 @@ def login(
         "user": UserResponse.model_validate(user)
     }
 
+@app.post("/api/v1/auth/logout")
+def logout(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    token = credentials.credentials
+
+    revoked_token = RevokedToken(token=token)
+
+    db.add(revoked_token)
+    db.commit()
+
+    return {
+        "message": "Successfully logged out"
+    }
 
 def get_owned_business(
     db: Session,
