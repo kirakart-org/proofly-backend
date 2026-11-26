@@ -177,3 +177,41 @@ class UserResponse(BaseModel):
     email: EmailStr
 
     model_config = {"from_attributes": True}
+
+
+from pydantic import BaseModel, Field
+from typing import Optional
+
+
+class CheckoutRequest(BaseModel):
+    plan_code: str = Field(pattern="^(pro|business)$")
+
+
+class VerifyPaymentRequest(BaseModel):
+    razorpay_payment_id: str
+    razorpay_subscription_id: str
+    razorpay_signature: str
+
+
+class CancelSubscriptionRequest(BaseModel):
+    cancel_at_cycle_end: bool = True
+
+
+class SubscriptionResponse(BaseModel):
+    plan_code: str
+    status: str
+
+    trial_end: Optional[str] = None
+    current_start: Optional[str] = None
+    current_end: Optional[str] = None
+
+    cancel_at_cycle_end: bool = False
+    razorpay_subscription_id: Optional[str] = None
+
+
+class PaymentHistoryItem(BaseModel):
+    razorpay_payment_id: str
+    amount: float
+    currency: str
+    status: str
+    created_at: Optional[str] = None

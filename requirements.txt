@@ -8,3 +8,4 @@ PyJWT
 cloudinary
 python-multipart
 pydantic[email]
+requests

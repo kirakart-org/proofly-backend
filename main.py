@@ -10,6 +10,11 @@ from schemas import ProductCreate, ProductUpdate, ProductResponse
 from models import Testimonial
 from models import PageView
 from models import RevokedToken
+from subscription_routes import (
+    router as subscription_router,
+    webhook_router,
+)
+
 from schemas import (
     TestimonialCreate,
     TestimonialUpdate,
@@ -20,6 +25,11 @@ from schemas import (
     EnquiryCreate,
     EnquiryStatusUpdate,
     EnquiryResponse
+)
+from models import (
+    Subscription,
+    SubscriptionPayment,
+    RazorpayWebhookEvent,
 )
 import os
 import jwt
@@ -62,6 +72,9 @@ from fastapi import UploadFile, File
 from cloudinary_service import upload_image
 from security import get_current_user
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from subscription_service import create_trial
+from subscription_service import require_subscription_access
+from subscription_service import require_subscription_access
 
 security = HTTPBearer()
 app = FastAPI(
@@ -80,6 +93,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(subscription_router)
+app.include_router(webhook_router)
 # Create database tables when models are added
 Base.metadata.create_all(bind=engine)
 password_hash = PasswordHash.recommended()
@@ -485,12 +500,20 @@ def update_business(
     current_user: User = Depends(get_current_user)
 ):
     business = get_owned_business(
-        db,
-        business_id,
-        current_user.id
-    )
+    db,
+    business_id,
+    current_user.id,
+)
+    # NEW: check only when publishing
+    if data.is_published is True:
+        require_subscription_access(
+            db,
+            current_user.id,
+        )
 
-    for key, value in data.model_dump(exclude_unset=True).items():
+    for key, value in data.model_dump(
+        exclude_unset=True
+    ).items():
         setattr(business, key, value)
 
     db.commit()
@@ -525,6 +548,13 @@ def get_public_page(
             detail="Page not found"
         )
 
+    # Check subscription using the business owner's user ID
+    require_subscription_access(
+        db=db,
+        user_id=business.user_id
+    )
+
+    # Record page view after access is confirmed
     view = PageView(business_id=business.id)
     db.add(view)
     db.commit()
@@ -661,6 +691,7 @@ def register(
     db.add(user)
     db.commit()
     db.refresh(user)
+    create_trial(db, user.id)
 
     token = create_access_token(user.id)
 
@@ -758,3 +789,4 @@ def get_owned_item(
     )
 
     return item
+

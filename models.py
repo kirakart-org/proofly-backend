@@ -1,7 +1,19 @@
 from sqlalchemy import Column, Integer, String, Text, Boolean
 from sqlalchemy import ForeignKey
 from sqlalchemy.orm import relationship
-
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Numeric,
+    JSON,
+    Text,
+    func,
+)
+from database import Base
 from database import Base
 
 
@@ -136,4 +148,106 @@ class RevokedToken(Base):
     revoked_at = Column(
         DateTime(timezone=True),
         server_default=func.now()
+    )
+
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id"),
+        nullable=False,
+        index=True,
+    )
+
+    plan_code = Column(String(30), nullable=False)
+    status = Column(String(30), nullable=False, default="trialing")
+
+    razorpay_subscription_id = Column(
+        String(100),
+        unique=True,
+        nullable=True,
+        index=True,
+    )
+
+    trial_start = Column(DateTime(timezone=True), nullable=True)
+    trial_end = Column(DateTime(timezone=True), nullable=True)
+
+    current_start = Column(DateTime(timezone=True), nullable=True)
+    current_end = Column(DateTime(timezone=True), nullable=True)
+
+    cancel_at_cycle_end = Column(Boolean, default=False)
+
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+class SubscriptionPayment(Base):
+    __tablename__ = "subscription_payments"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id"),
+        nullable=False,
+        index=True,
+    )
+
+    subscription_id = Column(
+        Integer,
+        ForeignKey("subscriptions.id"),
+        nullable=False,
+        index=True,
+    )
+
+    razorpay_payment_id = Column(
+        String(100),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+
+    amount = Column(Numeric(10, 2), nullable=False)
+    currency = Column(String(10), default="INR")
+    status = Column(String(30), nullable=False)
+
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+class RazorpayWebhookEvent(Base):
+    __tablename__ = "razorpay_webhook_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    event_id = Column(
+        String(150),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+
+    event_type = Column(String(100), nullable=False)
+
+    payload = Column(JSON, nullable=True)
+
+    processed_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
     )
