@@ -449,6 +449,19 @@ def create_business(
 
     return business
 
+@app.get("/api/v1/business/me")
+def get_my_business(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    business = db.query(Business).filter(
+        Business.user_id == current_user.id
+    ).first()
+
+    if not business:
+        return {"business": None}
+
+    return {"business": business}
 
 @app.get("/api/v1/business/{business_id}", response_model=BusinessResponse)
 def get_business(
@@ -688,18 +701,20 @@ def login(
 def logout(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     token = credentials.credentials
 
-    revoked_token = RevokedToken(token=token)
+    existing = db.query(RevokedToken).filter(
+        RevokedToken.token == token
+    ).first()
 
-    db.add(revoked_token)
-    db.commit()
+    if not existing:
+        db.add(RevokedToken(token=token))
+        db.commit()
 
-    return {
-        "message": "Successfully logged out"
-    }
+    return {"message": "Successfully logged out"}
+
 
 def get_owned_business(
     db: Session,
