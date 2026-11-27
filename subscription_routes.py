@@ -28,6 +28,13 @@ from subscription_service import (
     subscription_has_access,
 )
 
+from models import (
+    Business,
+    PortfolioProject,
+    Product,
+    Testimonial,
+)
+
 from razorpay_service import (
     RAZORPAY_KEY_ID,
     create_razorpay_subscription,
@@ -36,7 +43,7 @@ from razorpay_service import (
     cancel_razorpay_subscription,
     resume_razorpay_subscription,
 )
-
+from subscription_service import get_entitlement
 
 router = APIRouter(
     prefix="/api/v1/subscription",
@@ -511,4 +518,238 @@ async def razorpay_webhook(
     return {
         "received": True,
         "event": event_type,
+    }
+
+
+def _get_usage_snapshot(db: Session, user_id: int, features: dict):
+    business_ids = [
+        row[0]
+        for row in db.query(Business.id)
+        .filter(Business.user_id == user_id)
+        .all()
+    ]
+
+    def count_items(model):
+        if not business_ids:
+            return 0
+
+        return (
+            db.query(func.count(model.id))
+            .filter(model.business_id.in_(business_ids))
+            .scalar()
+            or 0
+        )
+
+    counts = {
+        "portfolio": count_items(PortfolioProject),
+        "products": count_items(Product),
+        "testimonials": count_items(Testimonial),
+    }
+
+    limits = {
+        "portfolio": features["portfolio_limit"],
+        "products": features["product_limit"],
+        "testimonials": features["testimonial_limit"],
+    }
+
+    usage = {}
+
+    for feature, current in counts.items():
+        limit = limits[feature]
+
+        usage[feature] = {
+            "used": current,
+            "limit": limit,
+            "remaining": (
+                None if limit is None
+                else max(limit - current, 0)
+            ),
+            "unlimited": limit is None,
+        }
+
+    return usage
+
+@router.post("/trial")
+def start_free_trial(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    existing_trial = (
+        db.query(Subscription)
+        .filter(
+            Subscription.user_id == current_user.id,
+            Subscription.plan == "free_trial",
+        )
+        .order_by(Subscription.created_at.desc())
+        .first()
+    )
+
+    if existing_trial:
+        entitlement = get_entitlement(db, current_user.id)
+
+        if not entitlement["has_access"]:
+            raise HTTPException(
+                status_code=409,
+                detail="Your free trial has already expired or been used.",
+            )
+
+        return {
+            "message": "Your free trial is already available.",
+            "status": existing_trial.status,
+            "trial_ends_at": existing_trial.trial_ends_at,
+            "has_access": entitlement["has_access"],
+        }
+
+    paid_subscription = (
+        db.query(Subscription)
+        .filter(
+            Subscription.user_id == current_user.id,
+            Subscription.plan.in_(["pro", "business"]),
+        )
+        .first()
+    )
+
+    if paid_subscription:
+        raise HTTPException(
+            status_code=409,
+            detail="A paid subscription already exists for this account.",
+        )
+
+    trial = ensure_trial_record(db, current_user)
+    db.commit()
+    db.refresh(trial)
+
+    entitlement = get_entitlement(db, current_user.id)
+
+    if not entitlement["has_access"]:
+        raise HTTPException(
+            status_code=409,
+            detail="Your free trial eligibility has expired.",
+        )
+
+    return {
+        "message": "Free trial is available.",
+        "plan": "pro",
+        "status": trial.status,
+        "trial_started_at": trial.trial_started_at,
+        "trial_ends_at": trial.trial_ends_at,
+        "has_access": entitlement["has_access"],
+    }
+
+
+@router.get("/usage")
+def get_subscription_usage(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    businesses = db.query(Business.id).filter(
+        Business.user_id == current_user.id
+    ).all()
+
+    business_ids = [business.id for business in businesses]
+
+    portfolio_count = 0
+    product_count = 0
+    testimonial_count = 0
+
+    if business_ids:
+        portfolio_count = db.query(PortfolioProject).filter(
+            PortfolioProject.business_id.in_(business_ids)
+        ).count()
+
+        product_count = db.query(Product).filter(
+            Product.business_id.in_(business_ids)
+        ).count()
+
+        testimonial_count = db.query(Testimonial).filter(
+            Testimonial.business_id.in_(business_ids)
+        ).count()
+
+    entitlement = get_entitlement(db, current_user.id)
+    limits = entitlement["limits"]
+
+    return {
+        "plan": entitlement["plan"],
+        "has_access": entitlement["has_access"],
+        "usage": {
+            "portfolio": portfolio_count,
+            "products": product_count,
+            "testimonials": testimonial_count,
+        },
+        "limits": limits,
+    }
+
+@router.get("/permissions")
+def get_subscription_permissions(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    entitlement = get_entitlement(db, current_user.id)
+
+    return {
+        "plan": entitlement["plan"],
+        "status": entitlement["status"],
+        "has_access": entitlement["has_access"],
+        "permissions": {
+            "can_publish": entitlement["has_access"],
+            "can_create_portfolio": entitlement["has_access"],
+            "can_create_products": entitlement["has_access"],
+            "can_create_testimonials": entitlement["has_access"],
+        },
+        "limits": entitlement["limits"],
+    }
+
+
+@router.get("/status")
+def get_subscription_status(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    subscription = get_user_subscription(db, current_user.id)
+    entitlement = get_entitlement(db, current_user.id)
+
+    return {
+        "plan": entitlement["plan"],
+        "status": entitlement["status"],
+        "has_access": entitlement["has_access"],
+        "trial_end": subscription.trial_end if subscription else None,
+        "current_start": subscription.current_start if subscription else None,
+        "current_end": subscription.current_end if subscription else None,
+        "cancel_at_cycle_end": (
+            subscription.cancel_at_cycle_end if subscription else False
+        ),
+    }
+
+
+@router.get("/invoices")
+def get_subscription_invoices(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    rows = (
+        db.query(SubscriptionPayment)
+        .filter(
+            SubscriptionPayment.user_id == current_user.id
+        )
+        .order_by(SubscriptionPayment.created_at.desc())
+        .limit(100)
+        .all()
+    )
+
+    return {
+        "invoices": [
+            {
+                "id": row.id,
+                "invoice_id": row.razorpay_invoice_id,
+                "payment_id": row.razorpay_payment_id,
+                "subscription_id": row.subscription_id,
+                "amount": float(row.amount),
+                "currency": row.currency,
+                "status": row.status,
+                "paid_at": row.paid_at,
+                "created_at": row.created_at,
+                "invoice_available": bool(row.razorpay_invoice_id),
+            }
+            for row in rows
+        ]
     }

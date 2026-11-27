@@ -114,3 +114,38 @@ def require_subscription_access(db: Session, user_id: int):
         )
 
     return subscription
+
+
+def get_entitlement(db: Session, user_id: int):
+    subscription = get_user_subscription(db, user_id)
+
+    if not subscription:
+        return {
+            "plan": "free_trial",
+            "status": "expired",
+            "has_access": False,
+            "limits": PLANS["pro"]["limits"],
+        }
+
+    plan_code = subscription.plan_code
+
+    # Trial uses the Pro limits during the trial period
+    limits_plan = "pro" if plan_code == "free_trial" else plan_code
+    plan = PLANS.get(limits_plan)
+
+    limits = (
+        plan["limits"]
+        if plan
+        else {
+            "portfolio": 0,
+            "products": 0,
+            "testimonials": 0,
+        }
+    )
+
+    return {
+        "plan": plan_code,
+        "status": subscription.status,
+        "has_access": subscription_has_access(subscription),
+        "limits": limits,
+    }

@@ -75,7 +75,11 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from subscription_service import create_trial
 from subscription_service import require_subscription_access
 from subscription_service import require_subscription_access
+from fastapi import HTTPException
+from sqlalchemy import func
 
+from models import Subscription
+from subscription_service import PLANS, get_user_subscription
 security = HTTPBearer()
 app = FastAPI(
     title="Proofly API",
@@ -86,9 +90,12 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://proofly-page.vercel.app",
+        "https://prooflynk.app",
+        "https://www.prooflynk.app",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ],
+    allow_origin_regex=r"https://[a-z0-9-]+\.prooflynk\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -146,12 +153,67 @@ def create_portfolio(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    # Verify that this business belongs to the logged-in user
     get_owned_business(
         db,
         data.business_id,
         current_user.id
     )
 
+    # Get the user's latest subscription
+    subscription = get_user_subscription(
+        db,
+        current_user.id
+    )
+
+    # Determine the portfolio limit for the current plan
+    plan_code = (
+        subscription.plan_code
+        if subscription
+        else "free_trial"
+    )
+
+    # Treat the free trial as Pro for content limits
+    if plan_code == "free_trial":
+        plan_code = "pro"
+
+    plan = PLANS.get(plan_code)
+
+    if not plan:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid subscription plan."
+        )
+
+    portfolio_limit = plan["limits"]["portfolio"]
+
+    # Business plan has unlimited portfolio projects
+    if portfolio_limit is not None:
+
+        current_count = (
+            db.query(func.count(PortfolioProject.id))
+            .filter(
+                PortfolioProject.business_id == data.business_id
+            )
+            .scalar()
+        )
+
+        if current_count >= portfolio_limit:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "PLAN_LIMIT_REACHED",
+                    "message": (
+                        f"Your {plan['name']} plan allows "
+                        f"up to {portfolio_limit} portfolio projects."
+                    ),
+                    "limit": portfolio_limit,
+                    "current": current_count,
+                    "upgrade_plan": "business"
+                }
+            )
+
+    # Create portfolio project
     project = PortfolioProject(**data.model_dump())
 
     db.add(project)
@@ -246,12 +308,72 @@ def create_product(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    get_owned_business(db, data.business_id, current_user.id)
+    # Verify business ownership
+    get_owned_business(
+        db,
+        data.business_id,
+        current_user.id
+    )
 
+    # Get user's subscription
+    subscription = get_user_subscription(
+        db,
+        current_user.id
+    )
+
+    plan_code = (
+        subscription.plan_code
+        if subscription
+        else "free_trial"
+    )
+
+    # Free trial gets the same limits as Pro
+    if plan_code == "free_trial":
+        plan_code = "pro"
+
+    plan = PLANS.get(plan_code)
+
+    if not plan:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid subscription plan."
+        )
+
+    product_limit = plan["limits"]["products"]
+
+    # Business plan has unlimited products
+    if product_limit is not None:
+
+        current_count = (
+            db.query(func.count(Product.id))
+            .filter(
+                Product.business_id == data.business_id
+            )
+            .scalar()
+        )
+
+        if current_count >= product_limit:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "PLAN_LIMIT_REACHED",
+                    "message": (
+                        f"Your {plan['name']} plan allows "
+                        f"up to {product_limit} products."
+                    ),
+                    "limit": product_limit,
+                    "current": current_count,
+                    "upgrade_plan": "business"
+                }
+            )
+
+    # Create product
     product = Product(**data.model_dump())
+
     db.add(product)
     db.commit()
     db.refresh(product)
+
     return product
 
 
@@ -317,14 +439,73 @@ def create_testimonial(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    get_owned_business(db, data.business_id, current_user.id)
+    # Verify business ownership
+    get_owned_business(
+        db,
+        data.business_id,
+        current_user.id
+    )
 
+    # Get user's subscription
+    subscription = get_user_subscription(
+        db,
+        current_user.id
+    )
+
+    plan_code = (
+        subscription.plan_code
+        if subscription
+        else "free_trial"
+    )
+
+    # Free trial gets the same limits as Pro
+    if plan_code == "free_trial":
+        plan_code = "pro"
+
+    plan = PLANS.get(plan_code)
+
+    if not plan:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid subscription plan."
+        )
+
+    testimonial_limit = plan["limits"]["testimonials"]
+
+    # Business plan has unlimited testimonials
+    if testimonial_limit is not None:
+
+        current_count = (
+            db.query(func.count(Testimonial.id))
+            .filter(
+                Testimonial.business_id == data.business_id
+            )
+            .scalar()
+        )
+
+        if current_count >= testimonial_limit:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "PLAN_LIMIT_REACHED",
+                    "message": (
+                        f"Your {plan['name']} plan allows "
+                        f"up to {testimonial_limit} testimonials."
+                    ),
+                    "limit": testimonial_limit,
+                    "current": current_count,
+                    "upgrade_plan": "business"
+                }
+            )
+
+    # Create testimonial
     testimonial = Testimonial(**data.model_dump())
+
     db.add(testimonial)
     db.commit()
     db.refresh(testimonial)
-    return testimonial
 
+    return testimonial
 
 @app.get("/api/v1/testimonials")
 def get_testimonials(
@@ -447,6 +628,10 @@ def create_business(
         Business.username == data.username
     ).first()
 
+    public_url = (
+    f"https://{business.username}.prooflynk.app"
+    )
+
     if existing:
         raise HTTPException(
             status_code=400,
@@ -462,8 +647,10 @@ def create_business(
     db.commit()
     db.refresh(business)
 
-    return business
-
+    return {
+        "business": business,
+        "public_url": public_url,
+    }
 @app.get("/api/v1/business/me")
 def get_my_business(
     db: Session = Depends(get_db),
@@ -497,15 +684,19 @@ def update_business(
     business_id: int,
     data: BusinessUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     business = get_owned_business(
-    db,
-    business_id,
-    current_user.id,
-)
-    # NEW: check only when publishing
-    if data.is_published is True:
+        db,
+        business_id,
+        current_user.id,
+    )
+
+    # Check subscription only when the request explicitly publishes
+    if (
+        "is_published" in data.model_fields_set
+        and data.is_published is True
+    ):
         require_subscription_access(
             db,
             current_user.id,
